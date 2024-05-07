@@ -378,7 +378,7 @@ public:
     // returns path stack with nodes and child indices, on the top is leaf child with key index
     [[nodiscard]] Stack<std::pair<Node<KeyType, Order> *, size_t> >
     leafSearchWithPath(const KeyType &key, const size_t height) const noexcept {
-        Stack<std::pair<Node<KeyType, Order> *, size_t> > stack{height};
+        Stack<std::pair<Node<KeyType, Order> *, size_t> > stack{height + 1};
         auto *node = const_cast<Node<KeyType, Order> *>(this);
         auto [found, idx] = node->getKeys().contains(key);
         while (!node->isLeaf()) {
@@ -678,7 +678,7 @@ public:
         delete roodNode;
         roodNode = new Node<key_type, N>{Node<key_type, N>::NodeType::LeafNode};
         sz = 0;
-        height = 1;
+        height = 0;
     }
 
     // O(log size)
@@ -714,7 +714,7 @@ public:
     }
 
     void dump(std::ostream &o = std::cerr) const noexcept {
-        Stack<std::pair<Node<Key, N> *, size_type> > stack{2 * N * (height - 1) + 1};
+        Stack<std::pair<Node<Key, N> *, size_type> > stack{2 * N * height + 1};
         stack.emplace(roodNode, 0);
         o << "B+ Tree: size = " << sz << " height = " << height << '\n';
         while (!stack.empty()) {
@@ -751,7 +751,7 @@ public:
 private:
     Node<key_type, N> *roodNode = new Node<key_type, N>{Node<key_type, N>::NodeType::LeafNode};
     size_type sz = 0;
-    size_type height = 1;
+    size_type height = 0;
 
     [[nodiscard]] inline const_iterator
     findWithLeaf(const key_type &key, const std::pair<Node<key_type, N> *, size_type> &leafAndLeafIdx) const noexcept {
