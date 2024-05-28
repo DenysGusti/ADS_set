@@ -335,11 +335,10 @@ public:
         return {node, idx};
     }
 
-    [[nodiscard]] LeafNode<KeyType, Order> *getFirstLeaf() const noexcept {
+    [[nodiscard]] leaf_node *getFirstLeaf() const noexcept {
         auto *node = const_cast<base_node *>(this);
         while (!node->isLeaf) {
-//            auto internal_node = static_cast<InternalNode<KeyType, Order> *>(node);
-//            assert(!internal_node->getChildren().empty());
+            assert(!static_cast<internal_node &>(*node).getChildren().empty());
             node = static_cast<internal_node &>(*node).getChildren().front();
         }
         return static_cast<leaf_node *>(node);
