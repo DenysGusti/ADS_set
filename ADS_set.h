@@ -270,11 +270,10 @@ public:
 
     explicit BaseNode(const bool isLeaf_) : isLeaf{isLeaf_} {}
 
-    inline void deleteNode() noexcept {
-        if (isLeaf)
-            delete static_cast<LeafNode<KeyType, Order> *>(this);
-        else
-            delete static_cast<InternalNode<KeyType, Order> *>(this);
+    ~BaseNode() noexcept {
+        if (!isLeaf)
+            for (const auto child: static_cast<InternalNode<KeyType, Order> &>(*this).children)
+                delete child;
     }
 
     [[nodiscard]] inline bool needsMerging() const noexcept {
@@ -362,11 +361,6 @@ public:
     friend class LeafNode<KeyType, Order>;
 
     InternalNode() : BaseNode<KeyType, Order>{false} {}
-
-    ~InternalNode() {
-        for (const auto child: children)
-            child->deleteNode();
-    }
 
     friend std::ostream &operator<<(std::ostream &os, const InternalNode &node) noexcept {
         node.print(os);
@@ -696,7 +690,7 @@ public:
 
     // O(size)
     ~ADS_set() noexcept {
-        roodNode->deleteNode();
+        delete roodNode;
     }
 
     // O(1)
@@ -734,7 +728,7 @@ public:
 
     //  O(size)
     void clear() noexcept {
-        roodNode->deleteNode();
+        delete roodNode;
         roodNode = new LeafNode<key_type, N>;
         sz = 0;
         height = 0;
@@ -872,7 +866,7 @@ private:
             return true;
         --height;
         BaseNode<key_type, N> *newRootNode = static_cast<InternalNode<key_type, N> *>(roodNode)->pullUpChildToRootNode();
-        roodNode->deleteNode();
+        delete roodNode;
         roodNode = newRootNode;
         return true;
     }
