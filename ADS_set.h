@@ -270,11 +270,7 @@ public:
 
     explicit BaseNode(const bool isLeaf_) : isLeaf{isLeaf_} {}
 
-    ~BaseNode() noexcept {
-        if (!isLeaf)
-            for (const auto child: static_cast<InternalNode<KeyType, Order> &>(*this).children)
-                delete child;
-    }
+    virtual ~BaseNode() noexcept = default;
 
     [[nodiscard]] inline bool needsMerging() const noexcept {
         return keys.size() < Order;
@@ -361,6 +357,11 @@ public:
     friend class LeafNode<KeyType, Order>;
 
     InternalNode() : BaseNode<KeyType, Order>{false} {}
+
+    ~InternalNode() noexcept override {
+        for (const auto child: children)
+            delete child;
+    }
 
     friend std::ostream &operator<<(std::ostream &os, const InternalNode &node) noexcept {
         node.print(os);
