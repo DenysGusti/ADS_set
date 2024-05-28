@@ -5,7 +5,6 @@
 #include <iostream>
 
 #define NDEBUG
-
 #include <cassert>
 
 template<class Type, size_t BlockSize>
@@ -281,7 +280,7 @@ public:
     }
 
     [[nodiscard]] inline bool hasEnoughKeysToBorrow() const noexcept {
-        assert(keys.size() >= minNumberOfKeys - 1);
+        assert(keys.size() >= Order - 1);
         return keys.size() > Order;
     }
 
@@ -299,49 +298,6 @@ public:
         newRootNode->children.pushFront(this);
         newRootNode->insertChild(0, newChild);
         return newRootNode;
-    }
-
-    // returns path stack with nodes and child indices, on the top is leaf child with key index
-    [[nodiscard]] Stack<std::pair<base_node *, size_t> >
-    leafSearchWithPath(const key_type &key, const size_t height) const noexcept {
-        Stack<std::pair<base_node *, size_t> > stack{height + 1};
-        auto *node = const_cast<base_node *>(this);
-        auto [found, idx] = node->getKeys().contains(key);
-        while (!node->isLeaf) {
-            // if key is found in internal node, we need to go to the right child,
-            // contains returns lower bound <=, so we need to increment child idx
-            if (found)
-                ++idx;
-            stack.emplace(node, idx);
-            node = static_cast<internal_node &>(*node).getChildren()[idx];
-            std::tie(found, idx) = node->getKeys().contains(key);
-        }
-        stack.emplace(node, idx);
-        return stack;
-    }
-
-    // returns leaf child with key index
-    [[nodiscard]] std::pair<base_node *, size_t> leafSearch(const key_type &key) const noexcept {
-        auto *node = const_cast<base_node *>(this);
-        auto [found, idx] = node->getKeys().contains(key);
-        while (!node->isLeaf) {
-            // if key is found in internal node, we need to go to the right child,
-            // contains returns lower bound <=, so we need to increment child idx
-            if (found)
-                ++idx;
-            node = static_cast<internal_node &>(*node).getChildren()[idx];
-            std::tie(found, idx) = node->getKeys().contains(key);
-        }
-        return {node, idx};
-    }
-
-    [[nodiscard]] leaf_node *getFirstLeaf() const noexcept {
-        auto *node = const_cast<base_node *>(this);
-        while (!node->isLeaf) {
-            assert(!static_cast<internal_node &>(*node).getChildren().empty());
-            node = static_cast<internal_node &>(*node).getChildren().front();
-        }
-        return static_cast<leaf_node *>(node);
     }
 
 protected:
@@ -386,7 +342,6 @@ public:
 
     // returns nullptr if was split
     [[nodiscard]] internal_node *addChildToInternalNode(const size_t idx, base_node &newChild) noexcept {
-        assert(!isLeaf());
         if (!this->keys.full()) {
             insertChild(idx, newChild);
             return nullptr;
@@ -400,7 +355,7 @@ public:
     }
 
     void fixProblemChild(const size_t problemChildIdx) noexcept {
-        assert(!keys.empty() && !children.empty());
+        assert(!this->keys.empty() && !children.empty());
         if (problemChildIdx > 0 && children[problemChildIdx - 1]->hasEnoughKeysToBorrow())
             borrowKeyFromLeftSibling(problemChildIdx);
         else if (problemChildIdx < children.size() - 1 && children[problemChildIdx + 1]->hasEnoughKeysToBorrow())
@@ -412,7 +367,7 @@ public:
     }
 
     base_node *pullUpChildToRootNode() noexcept {
-        assert(keys.empty() && children.size() == 1);
+        assert(this->keys.empty() && children.size() == 1);
         base_node *newRootNode = children.front();
         children.clear();   // nullify children
         return newRootNode;
@@ -422,8 +377,8 @@ private:
     NodeDataBlock<base_node *, 2 * Order + 1> children;
 
     void insertChild(const size_t idx, base_node &newChild) noexcept {
-        assert(!keys.full() && !children.full() && !children.empty() && !newChild.keys.empty());
-        assert(keys.contains(newChild.keys.front()).second == idx);
+        assert(!this->keys.full() && !children.full() && !children.empty() && !newChild.keys.empty());
+        assert(this->keys.contains(newChild.keys.front()).second == idx);
         this->keys.insertAndShiftRight(idx, newChild.keys.front());
         children.insertAndShiftRight(idx + 1, &newChild);
         // deletes the temporary first key of new right internal node child
@@ -432,7 +387,7 @@ private:
     }
 
     [[nodiscard]] InternalNode *splitInternalNode(const size_t idx, base_node &newChild) noexcept {
-        assert(keys.full() && children.full());
+        assert(this->keys.full() && children.full());
         auto newRightInternalNode = new internal_node;
         // the first key of new right internal node is saved in order to delete it later in insertChild or splitInternalNode parent method
         newRightInternalNode->keys = this->keys.splitAddNewValue(idx, newChild.keys.front());
@@ -484,7 +439,7 @@ private:
     }
 
     void mergeWithRightSibling(const size_t leftChildIdx) noexcept {
-        assert(leftChildIdx < keys.size());
+        assert(leftChildIdx < this->keys.size());
         if (children[leftChildIdx]->isLeaf) {
             auto &leftChild = static_cast<leaf_node &>(*children[leftChildIdx]);
             auto &rightChild = static_cast<leaf_node &>(*children[leftChildIdx + 1]);
@@ -570,7 +525,7 @@ private:
     leaf_node *next = nullptr;
 
     [[nodiscard]] leaf_node *splitLeaf(const size_t idx, const key_type &newKey) noexcept {
-        assert(keys.full());
+        assert(this->keys.full());
         auto newRightLeaf = new leaf_node;
         newRightLeaf->keys = this->keys.splitAddNewValue(idx, newKey);
         if (next != nullptr)
@@ -731,7 +686,7 @@ public:
 
     // O(log size)
     std::pair<const_iterator, bool> insert(const key_type &key) noexcept {
-        Stack<std::pair<base_node *, size_type> > stack = roodNode->leafSearchWithPath(key, height);
+        Stack<std::pair<base_node *, size_type> > stack = leafSearchWithPath(key);
         const_iterator it = findWithLeaf(key, stack.top());
         if (it != end())
             return {it, false};
@@ -773,13 +728,13 @@ public:
 
     // B+-Baum O(log size)
     [[nodiscard]] inline const_iterator find(const key_type &key) const noexcept {
-        return findWithLeaf(key, roodNode->leafSearch(key));
+        return findWithLeaf(key, leafSearch(key));
     }
 
     [[nodiscard]] inline const_iterator begin() const noexcept {
         if (empty())
             return end();
-        return {roodNode->getFirstLeaf(), 0};
+        return {getFirstLeaf(), 0};
     }
 
     [[nodiscard]] inline const_iterator end() const noexcept {
@@ -836,7 +791,7 @@ private:
     }
 
     inline bool tryAddKey(const key_type &key) noexcept {
-        Stack<std::pair<base_node *, size_type> > stack = roodNode->leafSearchWithPath(key, height);
+        Stack<std::pair<base_node *, size_type> > stack = leafSearchWithPath(key);
         return tryAddKeyWithPath(key, stack);
     }
 
@@ -866,7 +821,7 @@ private:
     bool tryRemoveKey(const Key &key) noexcept {
         if (empty())
             return false;
-        Stack<std::pair<base_node *, size_t> > stack = roodNode->leafSearchWithPath(key, height);
+        Stack<std::pair<base_node *, size_t> > stack = leafSearchWithPath(key);
         const auto [leaf, leafIdx] = stack.top();
         stack.pop();
         bool removed = static_cast<leaf_node &>(*leaf).removeKeyFromLeaf(leafIdx, key);
@@ -889,6 +844,49 @@ private:
         delete roodNode;
         roodNode = newRootNode;
         return true;
+    }
+
+    // returns path stack with nodes and child indices, on the top is leaf child with key index
+    [[nodiscard]] Stack<std::pair<base_node *, size_t> >
+    leafSearchWithPath(const key_type &key) const noexcept {
+        Stack<std::pair<base_node *, size_t> > stack{height + 1};
+        base_node *node = roodNode;
+        auto [found, idx] = node->getKeys().contains(key);
+        while (!node->isLeaf) {
+            // if key is found in internal node, we need to go to the right child,
+            // contains returns lower bound <=, so we need to increment child idx
+            if (found)
+                ++idx;
+            stack.emplace(node, idx);
+            node = static_cast<internal_node &>(*node).getChildren()[idx];
+            std::tie(found, idx) = node->getKeys().contains(key);
+        }
+        stack.emplace(node, idx);
+        return stack;
+    }
+
+    // returns leaf child with key index
+    [[nodiscard]] std::pair<base_node *, size_t> leafSearch(const key_type &key) const noexcept {
+        base_node *node = roodNode;
+        auto [found, idx] = node->getKeys().contains(key);
+        while (!node->isLeaf) {
+            // if key is found in internal node, we need to go to the right child,
+            // contains returns lower bound <=, so we need to increment child idx
+            if (found)
+                ++idx;
+            node = static_cast<internal_node &>(*node).getChildren()[idx];
+            std::tie(found, idx) = node->getKeys().contains(key);
+        }
+        return {node, idx};
+    }
+
+    [[nodiscard]] leaf_node *getFirstLeaf() const noexcept {
+        base_node *node = roodNode;
+        while (!node->isLeaf) {
+            assert(!static_cast<internal_node &>(*node).getChildren().empty());
+            node = static_cast<internal_node &>(*node).getChildren().front();
+        }
+        return static_cast<leaf_node *>(node);
     }
 };
 
