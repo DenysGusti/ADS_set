@@ -9,16 +9,18 @@
 
 #include <cassert>
 
-template<class Type, size_t BlockSize>
+template<class Type, uint32_t BlockSize>
 class NodeDataBlock {
 public:
     using key_type = Type;
     using key_compare = std::less<key_type>;
     using key_equal = std::equal_to<key_type>;
 
+    using size_type = std::uint32_t;
+
     class View {
     public:
-        View(const Type *const parr_, const size_t sz_) : parr{parr_}, sz{sz_} {}
+        View(const Type *const parr_, const size_type sz_) : parr{parr_}, sz{sz_} {}
 
         [[nodiscard]] inline const Type *begin() const noexcept {
             return parr;
@@ -28,18 +30,18 @@ public:
             return parr + sz;
         }
 
-        [[nodiscard]] inline size_t size() const noexcept {
+        [[nodiscard]] inline size_type size() const noexcept {
             return sz;
         }
 
-        [[nodiscard]] inline const Type &operator[](const size_t idx) const noexcept {
+        [[nodiscard]] inline const Type &operator[](const size_type idx) const noexcept {
             assert(idx < sz);
             return parr[idx];
         }
 
     private:
         const Type *parr = nullptr;
-        size_t sz = 0;
+        size_type sz = 0;
     };
 
     [[nodiscard]] inline operator View() const noexcept {  // NOLINT(google-explicit-constructor)
@@ -54,12 +56,12 @@ public:
         return block + sz;
     }
 
-    [[nodiscard]] inline const Type &operator[](const size_t idx) const noexcept {
+    [[nodiscard]] inline const Type &operator[](const size_type idx) const noexcept {
         assert(idx < sz && !empty());
         return block[idx];
     }
 
-    [[nodiscard]] inline Type &operator[](const size_t idx) noexcept {
+    [[nodiscard]] inline Type &operator[](const size_type idx) noexcept {
         assert(idx < sz && !empty());
         return block[idx];
     }
@@ -74,7 +76,7 @@ public:
         return block[sz - 1];
     }
 
-    [[nodiscard]] inline size_t size() const noexcept {
+    [[nodiscard]] inline size_type size() const noexcept {
         return sz;
     }
 
@@ -86,9 +88,9 @@ public:
         return sz >= BlockSize;
     }
 
-    void insertAndShiftRight(const size_t idx, const Type &value) noexcept {
+    void insertAndShiftRight(const size_type idx, const Type &value) noexcept {
         assert(idx < BlockSize && !full());
-        for (size_t i = sz; i > idx; --i)
+        for (size_type i = sz; i > idx; --i)
 #pragma GCC diagnostic warning "-Warray-bounds"
                 block[i] = std::move(block[i - 1]); // no overflow because now i >= 1
 #pragma GCC diagnostic pop
@@ -104,9 +106,9 @@ public:
         insertAndShiftRight(sz, value);
     }
 
-    void eraseAndShiftLeft(const size_t idx) noexcept {
+    void eraseAndShiftLeft(const size_type idx) noexcept {
         assert(idx < BlockSize && !empty());
-        for (size_t i = idx; i < sz - 1; ++i)   // no overflow because now sz >= 1
+        for (size_type i = idx; i < sz - 1; ++i)   // no overflow because now sz >= 1
             block[i] = std::move(block[i + 1]);
         --sz;
     }
@@ -119,25 +121,25 @@ public:
         eraseAndShiftLeft(sz - 1);
     }
 
-    NodeDataBlock splitAddNewValue(const size_t newValueIdx, const Type &newValue) noexcept {
+    NodeDataBlock splitAddNewValue(const size_type newValueIdx, const Type &newValue) noexcept {
         assert(newValueIdx <= BlockSize && full());
         // oldBlockSize >= newBlock_size
-        size_t oldBlockSize = (BlockSize + 1) / 2;
+        size_type oldBlockSize = (BlockSize + 1) / 2;
         NodeDataBlock newBlock;
         if (newValueIdx < oldBlockSize) {  // insert value in old block
             --oldBlockSize;
             newBlock.sz = sz - oldBlockSize;
             sz = oldBlockSize;
-            for (size_t i = 0; i < newBlock.sz; ++i)
+            for (size_type i = 0; i < newBlock.sz; ++i)
                 newBlock.block[i] = std::move(block[i + oldBlockSize]);
             insertAndShiftRight(newValueIdx, newValue);
         } else {  // insert value in new block
             newBlock.sz = sz - oldBlockSize + 1;
             sz = oldBlockSize;
-            for (size_t i = 0; i < newValueIdx - oldBlockSize; ++i)
+            for (size_type i = 0; i < newValueIdx - oldBlockSize; ++i)
                 newBlock.block[i] = std::move(block[i + oldBlockSize]);
             newBlock.block[newValueIdx - oldBlockSize] = newValue;
-            for (size_t i = newValueIdx - oldBlockSize + 1; i < newBlock.sz; ++i)
+            for (size_type i = newValueIdx - oldBlockSize + 1; i < newBlock.sz; ++i)
                 newBlock.block[i] = std::move(block[i + oldBlockSize - 1]);
         }
         return newBlock;
@@ -145,7 +147,7 @@ public:
 
     void merge(View rightBlock) noexcept {
         assert(size() + rightBlock.size() <= BlockSize);
-        for (size_t i = 0; i < rightBlock.size(); ++i)
+        for (size_type i = 0; i < rightBlock.size(); ++i)
             block[i + sz] = std::move(rightBlock[i]);
         sz += rightBlock.size();
     }
@@ -153,15 +155,15 @@ public:
     // only for sorted values, SFINAE
     // returns (true, idx) if contains value, else (false, idx) of first element, so that value <= element
     template<class U = Type, class = std::enable_if_t<!std::is_pointer_v<U> > >
-    [[nodiscard]] std::pair<bool, size_t> contains(const Type &value) const noexcept {
+    [[nodiscard]] std::pair<bool, size_type> contains(const Type &value) const noexcept {
         if constexpr (BlockSize >= 256) {   // binary search
             const Type *it = binarySearch(begin(), end(), value);  // lower bound, value <= *it
-            const size_t idx = it - begin();
+            const size_type idx = it - begin();
             if (it != end() && key_equal{}(value, *it))  // contains value
                 return {true, idx};
             return {false, idx};
         } else {   // linear search
-            for (size_t idx = 0; idx < sz; ++idx) {
+            for (size_type idx = 0; idx < sz; ++idx) {
                 if (key_compare{}(block[idx], value))   // value >= block[idx]
                     continue;
                 if (key_equal{}(value, block[idx]))
@@ -179,7 +181,7 @@ public:
 
 private:
     Type block[BlockSize]{};
-    size_t sz = 0;
+    size_type sz = 0;
 
     // only for sorted values, SFINAE, lower bound
     template<class U = Type, class = std::enable_if_t<!std::is_pointer_v<U> > >
@@ -202,7 +204,9 @@ private:
 template<class Type>
 class Stack {
 public:
-    explicit Stack(const size_t max_sz_) noexcept: data{new Type[max_sz_]}, max_sz{max_sz_}, sz{0} {}
+    using size_type = std::size_t;
+
+    explicit Stack(const size_type max_sz_) noexcept: data{new Type[max_sz_]}, max_sz{max_sz_}, sz{0} {}
 
     Stack(const Stack &other) noexcept: data{new Type[other.max_sz]}, max_sz{other.max_sz}, sz{other.sz} {
         std::copy(other.data, other.data + other.sz, data);
@@ -224,7 +228,7 @@ public:
         delete[] data;
     }
 
-    [[nodiscard]] inline size_t size() const noexcept {
+    [[nodiscard]] inline size_type size() const noexcept {
         return sz;
     }
 
@@ -232,7 +236,7 @@ public:
         return sz == 0;
     }
 
-    [[nodiscard]] inline size_t capacity() const noexcept {
+    [[nodiscard]] inline size_type capacity() const noexcept {
         return max_sz;
     }
 
@@ -269,8 +273,8 @@ public:
 
 private:
     Type *data = nullptr;
-    size_t max_sz = 0;
-    size_t sz = 0;
+    size_type max_sz = 0;
+    size_type sz = 0;
 };
 
 template<class KeyType, size_t Order>
@@ -288,6 +292,8 @@ public:
     using key_type = KeyType;
     using key_compare = std::less<key_type>;
     using key_equal = std::equal_to<key_type>;
+
+    using size_type = std::size_t;
 
     using base_node = BaseNode<key_type, Order>;
     using internal_node = InternalNode<key_type, Order>;
@@ -336,6 +342,8 @@ public:
     using key_compare = std::less<key_type>;
     using key_equal = std::equal_to<key_type>;
 
+    using size_type = std::size_t;
+
     using base_node = BaseNode<KeyType, Order>;
     using internal_node = InternalNode<KeyType, Order>;
     using leaf_node = LeafNode<KeyType, Order>;
@@ -366,7 +374,7 @@ public:
     }
 
     // returns nullptr if was split
-    [[nodiscard]] internal_node *addChildToInternalNode(const size_t idx, base_node &newChild) noexcept {
+    [[nodiscard]] internal_node *addChildToInternalNode(const size_type idx, base_node &newChild) noexcept {
         if (!this->keys.full()) {
             insertChild(idx, newChild);
             return nullptr;
@@ -379,14 +387,14 @@ public:
         return children;
     }
 
-    void fixProblemChild(const size_t problemChildIdx) noexcept {
+    void fixProblemChild(const size_type problemChildIdx) noexcept {
         assert(!this->keys.empty() && !children.empty());
         if (problemChildIdx > 0 && children[problemChildIdx - 1]->hasEnoughKeysToBorrow())
             borrowKeyFromLeftSibling(problemChildIdx);
         else if (problemChildIdx < children.size() - 1 && children[problemChildIdx + 1]->hasEnoughKeysToBorrow())
             borrowKeyFromRightSibling(problemChildIdx);
         else {
-            size_t leftChildIdx = std::min(problemChildIdx, this->keys.size() - 1);
+            size_type leftChildIdx = std::min(problemChildIdx, static_cast<size_type>(this->keys.size()) - 1);
             mergeWithRightSibling(leftChildIdx);
         }
     }
@@ -401,7 +409,7 @@ public:
 private:
     NodeDataBlock<base_node *, 2 * Order + 1> children;
 
-    void insertChild(const size_t idx, base_node &newChild) noexcept {
+    void insertChild(const size_type idx, base_node &newChild) noexcept {
         assert(!this->keys.full() && !children.full() && !children.empty() && !newChild.keys.empty());
         assert(this->keys.contains(newChild.keys.front()).second == idx);
         this->keys.insertAndShiftRight(idx, newChild.keys.front());
@@ -411,7 +419,7 @@ private:
             newChild.keys.popFront();
     }
 
-    [[nodiscard]] InternalNode *splitInternalNode(const size_t idx, base_node &newChild) noexcept {
+    [[nodiscard]] InternalNode *splitInternalNode(const size_type idx, base_node &newChild) noexcept {
         assert(this->keys.full() && children.full());
         auto newRightInternalNode = new internal_node;
         // the first key of new right internal node is saved in order to delete it later in insertChild or splitInternalNode parent method
@@ -423,7 +431,7 @@ private:
         return newRightInternalNode;
     }
 
-    void borrowKeyFromLeftSibling(const size_t problemChildIdx) noexcept {
+    void borrowKeyFromLeftSibling(const size_type problemChildIdx) noexcept {
         assert(problemChildIdx > 0 && children[problemChildIdx - 1]->hasEnoughKeysToBorrow());
         if (children[problemChildIdx]->isLeaf) {
             auto &leftSibling = static_cast<leaf_node &>(*children[problemChildIdx - 1]);
@@ -443,7 +451,7 @@ private:
         }
     }
 
-    void borrowKeyFromRightSibling(const size_t problemChildIdx) noexcept {
+    void borrowKeyFromRightSibling(const size_type problemChildIdx) noexcept {
         assert(problemChildIdx < children.size() - 1 && children[problemChildIdx + 1]->hasEnoughKeysToBorrow());
         if (children[problemChildIdx]->isLeaf) {
             auto &leftProblemChild = static_cast<leaf_node &>(*children[problemChildIdx]);
@@ -463,7 +471,7 @@ private:
         }
     }
 
-    void mergeWithRightSibling(const size_t leftChildIdx) noexcept {
+    void mergeWithRightSibling(const size_type leftChildIdx) noexcept {
         assert(leftChildIdx < this->keys.size());
         if (children[leftChildIdx]->isLeaf) {
             auto &leftChild = static_cast<leaf_node &>(*children[leftChildIdx]);
@@ -471,8 +479,6 @@ private:
             assert(!leftChild.hasEnoughKeysToBorrow() && !rightChild.hasEnoughKeysToBorrow());
             // left child keys + left to right sibling parent key (than deleted in parent) + right sibling keys
             leftChild.keys.merge(rightChild.keys);
-            if (rightChild.next != nullptr)
-                rightChild.next->prev = &leftChild;
             leftChild.next = rightChild.next;
             delete &rightChild;
         } else {
@@ -498,6 +504,8 @@ public:
     using key_compare = std::less<key_type>;
     using key_equal = std::equal_to<key_type>;
 
+    using size_type = std::size_t;
+
     using base_node = BaseNode<KeyType, Order>;
     using internal_node = InternalNode<KeyType, Order>;
     using leaf_node = LeafNode<KeyType, Order>;
@@ -514,14 +522,15 @@ public:
     }
 
     void print(std::ostream &os) const noexcept {
-        os << "LeafNode: prev = " << prev << " this = " << this << " next = " << next << " keys (size "
-           << this->keys.size() << "): ";
+//        os << "LeafNode: prev = " << prev << " this = " << this << " next = " << next << " keys (size "
+//           << this->keys.size() << "): ";
+        os << "LeafNode: this = " << this << " next = " << next << " keys (size " << this->keys.size() << "): ";
         for (const auto &key: this->keys)
             os << key << ' ';
     }
 
     // returns nullptr if was split
-    [[nodiscard]] leaf_node *addKeyToLeaf(const size_t idx, const key_type &key) noexcept {
+    [[nodiscard]] leaf_node *addKeyToLeaf(const size_type idx, const key_type &key) noexcept {
         if (!this->keys.full()) {
             this->keys.insertAndShiftRight(idx, key);
             return nullptr;
@@ -534,39 +543,41 @@ public:
         return next;
     }
 
-    [[nodiscard]] inline const leaf_node *getPrev() const noexcept {
-        return prev;
-    }
+//    [[nodiscard]] inline const leaf_node *getPrev() const noexcept {
+//        return prev;
+//    }
 
-    inline void removeKeyFromLeaf(const size_t idx) noexcept {
+    inline void removeKeyFromLeaf(const size_type idx) noexcept {
         this->keys.eraseAndShiftLeft(idx);
     }
 
 private:
-    leaf_node *prev = nullptr;
     leaf_node *next = nullptr;
 
-    [[nodiscard]] leaf_node *splitLeaf(const size_t idx, const key_type &newKey) noexcept {
+    [[nodiscard]] leaf_node *splitLeaf(const size_type idx, const key_type &newKey) noexcept {
         assert(this->keys.full());
         auto newRightLeaf = new leaf_node;
         newRightLeaf->keys = this->keys.splitAddNewValue(idx, newKey);
-        if (next != nullptr)
-            next->prev = newRightLeaf;
+//        if (next != nullptr)
+//            next->prev = newRightLeaf;
         newRightLeaf->next = next;
         next = newRightLeaf;
-        newRightLeaf->prev = this;
+//        newRightLeaf->prev = this;
         return newRightLeaf;
     }
 };
 
-template<class Key, size_t N = 2>
+template<class Key, uint32_t N = 2>
 class Iterator {
 public:
     using value_type = Key;
     using reference = const value_type &;
     using pointer = const value_type *;
     using difference_type = std::ptrdiff_t;
-    using iterator_category = std::bidirectional_iterator_tag;
+//    using iterator_category = std::bidirectional_iterator_tag;
+    using iterator_category = std::forward_iterator_tag;
+
+    using size_type = std::size_t;
 
     using base_node = BaseNode<value_type, N>;
     using internal_node = InternalNode<value_type, N>;
@@ -574,7 +585,7 @@ public:
 
     Iterator() = default;
 
-    Iterator(const leaf_node *const currentLeaf_, const size_t currentKeyIdx_) noexcept:
+    Iterator(const leaf_node *const currentLeaf_, const size_type currentKeyIdx_) noexcept:
             currentLeaf{currentLeaf_}, currentKeyIdx{currentKeyIdx_} {}
 
     [[nodiscard]] inline reference operator*() const noexcept {
@@ -600,20 +611,20 @@ public:
         return old;
     }
 
-    Iterator &operator--() noexcept {
-        if (currentKeyIdx == 0) {
-            currentLeaf = currentLeaf->getPrev();
-            currentKeyIdx = currentLeaf->getKeys().size() - 1;
-        } else
-            --currentKeyIdx;
-        return *this;
-    }
-
-    Iterator operator--(int) noexcept { // NOLINT(*-dcl21-cpp)
-        Iterator old = *this;
-        operator--();
-        return old;
-    }
+//    Iterator &operator--() noexcept {
+//        if (currentKeyIdx == 0) {
+//            currentLeaf = currentLeaf->getPrev();
+//            currentKeyIdx = currentLeaf->getKeys().size() - 1;
+//        } else
+//            --currentKeyIdx;
+//        return *this;
+//    }
+//
+//    Iterator operator--(int) noexcept { // NOLINT(*-dcl21-cpp)
+//        Iterator old = *this;
+//        operator--();
+//        return old;
+//    }
 
     friend inline bool operator==(const Iterator &lhs, const Iterator &rhs) noexcept {
         return lhs.currentLeaf == rhs.currentLeaf && lhs.currentKeyIdx == rhs.currentKeyIdx;
@@ -625,7 +636,7 @@ public:
 
 private:
     const leaf_node *currentLeaf = nullptr;
-    size_t currentKeyIdx = 0;
+    size_type currentKeyIdx = 0;
 };
 
 // B+-Tree
@@ -866,9 +877,9 @@ private:
     }
 
     // returns path stack with nodes and child indices, on the top is leaf child with key index
-    [[nodiscard]] std::pair<bool, Stack<std::pair<base_node *, size_t> > >
+    [[nodiscard]] std::pair<bool, Stack<std::pair<base_node *, size_type> > >
     leafSearchWithPath(const key_type &key) const noexcept {
-        Stack<std::pair<base_node *, size_t> > stack{height + 1};
+        Stack<std::pair<base_node *, size_type> > stack{height + 1};
         base_node *node = roodNode;
         auto [found, idx] = node->getKeys().contains(key);
         while (!node->isLeaf) {
@@ -881,11 +892,11 @@ private:
             std::tie(found, idx) = node->getKeys().contains(key);
         }
         stack.emplace(node, idx);
-        return {found, stack};
+        return {found, std::move(stack)};
     }
 
     // returns leaf child with key index
-    [[nodiscard]] std::tuple<bool, base_node *, size_t> leafSearch(const key_type &key) const noexcept {
+    [[nodiscard]] std::tuple<bool, base_node *, size_type> leafSearch(const key_type &key) const noexcept {
         base_node *node = roodNode;
         auto [found, idx] = node->getKeys().contains(key);
         while (!node->isLeaf) {
