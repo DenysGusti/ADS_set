@@ -719,9 +719,8 @@ public:
 
     // O(log size)
     std::pair<const_iterator, bool> insert(const key_type &key) noexcept {
-        bool found;
-        Stack<std::pair<base_node *, size_type> > stack = leafSearchWithPath(key, found);
-        if (found)
+        Stack<std::pair<base_node *, size_type> > stack{height + 1};
+        if (leafSearchWithPath(key, stack))
             return {const_iterator{static_cast<leaf_node *>(stack.top().first), stack.top().second}, false};
         tryAddKeyWithPath(key, stack);
         return {find(key), true};
@@ -820,9 +819,8 @@ private:
     size_type height = 0;
 
     inline bool tryAddKey(const key_type &key) noexcept {
-        bool found;
-        Stack<std::pair<base_node *, size_type> > stack = leafSearchWithPath(key, found);
-        if (found)
+        Stack<std::pair<base_node *, size_type> > stack{height + 1};
+        if (leafSearchWithPath(key, stack))
             return false;
         tryAddKeyWithPath(key, stack);
         return true;
@@ -851,9 +849,8 @@ private:
     bool tryRemoveKey(const Key &key) noexcept {
         if (empty())
             return false;
-        bool found;
-        Stack<std::pair<base_node *, size_type> > stack = leafSearchWithPath(key, found);
-        if (!found)
+        Stack<std::pair<base_node *, size_type> > stack{height + 1};
+        if (!leafSearchWithPath(key, stack))
             return false;
         const auto [leaf, leafIdx] = stack.top();
         stack.pop();
@@ -878,9 +875,8 @@ private:
     }
 
     // returns path stack with nodes and child indices, on the top is leaf child with key index
-    [[nodiscard]] Stack<std::pair<base_node *, size_type> >
-    leafSearchWithPath(const key_type &key, bool &found_) const noexcept {
-        Stack<std::pair<base_node *, size_type> > stack{height + 1};
+    [[nodiscard]] bool
+    leafSearchWithPath(const key_type &key, Stack<std::pair<base_node *, size_type> > &stack) const noexcept {
         base_node *node = roodNode;
         auto [found, idx] = node->getKeys().contains(key);
         while (!node->isLeaf) {
@@ -893,8 +889,7 @@ private:
             std::tie(found, idx) = node->getKeys().contains(key);
         }
         stack.emplace(node, idx);
-        found_ = found;
-        return stack;
+        return found;
     }
 
     // returns leaf child with key index
