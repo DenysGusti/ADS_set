@@ -3,8 +3,10 @@
 
 #include <initializer_list>
 #include <iostream>
+#include <utility>
 
 #define NDEBUG
+
 #include <cassert>
 
 template<class Type, size_t BlockSize>
@@ -152,11 +154,23 @@ public:
     // returns (true, idx) if contains value, else (false, idx) of first element, so that value <= element
     template<class U = Type, class = std::enable_if_t<!std::is_pointer_v<U> > >
     [[nodiscard]] std::pair<bool, size_t> contains(const Type &value) const noexcept {
-        const Type *it = binarySearch(begin(), end(), value);  // lower bound, value <= *it
-        const size_t idx = it - begin();
-        if (it != end() && key_equal{}(value, *it))  // contains value
-            return {true, idx};
-        return {false, idx};
+        if constexpr (BlockSize >= 256) {   // binary search
+            const Type *it = binarySearch(begin(), end(), value);  // lower bound, value <= *it
+            const size_t idx = it - begin();
+            if (it != end() && key_equal{}(value, *it))  // contains value
+                return {true, idx};
+            return {false, idx};
+        } else {   // linear search
+            for (size_t idx = 0; idx < sz; ++idx) {
+                if (key_compare{}(block[idx], value))   // value >= block[idx]
+                    continue;
+                if (key_equal{}(value, block[idx]))
+                    return {true, idx};
+                if (key_compare{}(value, block[idx]))
+                    return {false, idx};
+            }
+            return {false, sz};
+        }
     }
 
     inline void clear() noexcept {
@@ -189,6 +203,22 @@ template<class Type>
 class Stack {
 public:
     explicit Stack(const size_t max_sz_) noexcept: data{new Type[max_sz_]}, max_sz{max_sz_}, sz{0} {}
+
+    Stack(const Stack &other) noexcept: data{new Type[other.max_sz]}, max_sz{other.max_sz}, sz{other.sz} {
+        std::copy(other.data, other.data + other.sz, data);
+    }
+
+    Stack(Stack &&other) noexcept:
+            data{std::exchange(other.data, nullptr)}, max_sz{std::exchange(other.max_sz, 0)},
+            sz{std::exchange(other.sz, 0)} {}
+
+    // copy and move assignment
+    Stack &operator=(Stack other) noexcept {
+        std::swap(data, other.data);
+        std::swap(max_sz, other.max_sz);
+        std::swap(sz, other.sz);
+        return *this;
+    }
 
     ~Stack() noexcept {
         delete[] data;
@@ -286,11 +316,6 @@ public:
 
     [[nodiscard]] inline const NodeDataBlock<key_type, 2 * Order> &getKeys() const noexcept {
         return keys;
-    }
-
-    [[nodiscard]] inline bool containsKey(const size_t idx, const key_type &key) const noexcept {
-        assert(idx <= keys.size());
-        return idx < keys.size() && key_equal{}(keys[idx], key);
     }
 
     [[nodiscard]] base_node *createNewRootNodeFromOld(base_node &newChild) noexcept {
@@ -513,11 +538,8 @@ public:
         return prev;
     }
 
-    bool removeKeyFromLeaf(const size_t idx, const key_type &key) {
-        if (idx == this->keys.size() || key_compare{}(key, this->keys[idx]))  // not found
-            return false;
+    inline void removeKeyFromLeaf(const size_t idx) noexcept {
         this->keys.eraseAndShiftLeft(idx);
-        return true;
     }
 
 private:
@@ -686,11 +708,11 @@ public:
 
     // O(log size)
     std::pair<const_iterator, bool> insert(const key_type &key) noexcept {
-        Stack<std::pair<base_node *, size_type> > stack = leafSearchWithPath(key);
-        const_iterator it = findWithLeaf(key, stack.top());
-        if (it != end())
-            return {it, false};
-        tryAddKeyWithPath(key, stack);
+        auto foundStack = leafSearchWithPath(key);
+        const auto [leaf, leafIdx] = foundStack.second.top();
+        if (foundStack.first) // contains
+            return {const_iterator{static_cast<leaf_node *>(leaf), leafIdx}, false};
+        tryAddKeyWithPath(key, foundStack);
         return {find(key), true};
     }
 
@@ -728,7 +750,10 @@ public:
 
     // B+-Baum O(log size)
     [[nodiscard]] inline const_iterator find(const key_type &key) const noexcept {
-        return findWithLeaf(key, leafSearch(key));
+        const auto [found, leaf, leafIdx] = leafSearch(key);
+        if (found) // contains
+            return {static_cast<leaf_node *>(leaf), leafIdx};
+        return end();
     }
 
     [[nodiscard]] inline const_iterator begin() const noexcept {
@@ -782,25 +807,19 @@ private:
     size_type sz = 0;
     size_type height = 0;
 
-    [[nodiscard]] inline const_iterator findWithLeaf(const key_type &key,
-                                                     const std::pair<base_node *, size_type> &leafAndLeafIdx) const noexcept {
-        const auto [leaf, leafIdx] = leafAndLeafIdx;
-        if (leaf->containsKey(leafIdx, key)) // contains
-            return {static_cast<leaf_node *>(leaf), leafIdx};
-        return end();
-    }
-
     inline bool tryAddKey(const key_type &key) noexcept {
-        Stack<std::pair<base_node *, size_type> > stack = leafSearchWithPath(key);
-        return tryAddKeyWithPath(key, stack);
+        std::pair<bool, Stack<std::pair<base_node *, size_type> > > foundStack = leafSearchWithPath(key);
+        return tryAddKeyWithPath(key, foundStack);
     }
 
-    bool tryAddKeyWithPath(const key_type &key, Stack<std::pair<base_node *, size_type> > &stack) noexcept {
+    bool tryAddKeyWithPath(const key_type &key,
+                           std::pair<bool, Stack<std::pair<base_node *, size_type> > > &foundStack) noexcept {
+        auto &[found, stack] = foundStack;
+        if (found) // duplicate
+            return false;
         assert(!stack.empty());
         const auto [leaf, leafIdx] = stack.top();
         stack.pop();
-        if (leaf->containsKey(leafIdx, key)) // duplicate
-            return false;
         ++sz;
         base_node *newRightChild = static_cast<leaf_node *>(leaf)->addKeyToLeaf(leafIdx, key);
         if (newRightChild == nullptr)
@@ -821,12 +840,12 @@ private:
     bool tryRemoveKey(const Key &key) noexcept {
         if (empty())
             return false;
-        Stack<std::pair<base_node *, size_t> > stack = leafSearchWithPath(key);
+        auto [found, stack] = leafSearchWithPath(key);
+        if (!found)
+            return false;
         const auto [leaf, leafIdx] = stack.top();
         stack.pop();
-        bool removed = static_cast<leaf_node &>(*leaf).removeKeyFromLeaf(leafIdx, key);
-        if (!removed)
-            return false;
+        static_cast<leaf_node &>(*leaf).removeKeyFromLeaf(leafIdx);
         --sz;
         if (roodNode->isLeaf || !leaf->needsMerging())
             return true;
@@ -847,7 +866,7 @@ private:
     }
 
     // returns path stack with nodes and child indices, on the top is leaf child with key index
-    [[nodiscard]] Stack<std::pair<base_node *, size_t> >
+    [[nodiscard]] std::pair<bool, Stack<std::pair<base_node *, size_t> > >
     leafSearchWithPath(const key_type &key) const noexcept {
         Stack<std::pair<base_node *, size_t> > stack{height + 1};
         base_node *node = roodNode;
@@ -862,11 +881,11 @@ private:
             std::tie(found, idx) = node->getKeys().contains(key);
         }
         stack.emplace(node, idx);
-        return stack;
+        return {found, stack};
     }
 
     // returns leaf child with key index
-    [[nodiscard]] std::pair<base_node *, size_t> leafSearch(const key_type &key) const noexcept {
+    [[nodiscard]] std::tuple<bool, base_node *, size_t> leafSearch(const key_type &key) const noexcept {
         base_node *node = roodNode;
         auto [found, idx] = node->getKeys().contains(key);
         while (!node->isLeaf) {
@@ -877,7 +896,7 @@ private:
             node = static_cast<internal_node &>(*node).getChildren()[idx];
             std::tie(found, idx) = node->getKeys().contains(key);
         }
-        return {node, idx};
+        return {found, node, idx};
     }
 
     [[nodiscard]] leaf_node *getFirstLeaf() const noexcept {
