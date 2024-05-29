@@ -719,11 +719,10 @@ public:
 
     // O(log size)
     std::pair<const_iterator, bool> insert(const key_type &key) noexcept {
-        auto foundStack = leafSearchWithPath(key);
-        const auto [leaf, leafIdx] = foundStack.second.top();
-        if (foundStack.first) // contains
-            return {const_iterator{static_cast<leaf_node *>(leaf), leafIdx}, false};
-        tryAddKeyWithPath(key, foundStack);
+        Stack<std::pair<base_node *, size_type> > stack{height + 1};
+        if (leafSearchWithPath(key, stack)) // contains
+            return {const_iterator{static_cast<leaf_node *>(stack.top().first), stack.top().second}, false};
+        tryAddKeyWithPath(key, stack);
         return {find(key), true};
     }
 
@@ -761,9 +760,10 @@ public:
 
     // B+-Baum O(log size)
     [[nodiscard]] inline const_iterator find(const key_type &key) const noexcept {
-        const auto [found, leaf, leafIdx] = leafSearch(key);
-        if (found) // contains
-            return {static_cast<leaf_node *>(leaf), leafIdx};
+        leaf_node *leaf;
+        size_type leafIdx;
+        if (leafSearch(key, leaf, leafIdx)) // contains
+            return {leaf, leafIdx};
         return end();
     }
 
@@ -819,40 +819,38 @@ private:
     size_type height = 0;
 
     inline bool tryAddKey(const key_type &key) noexcept {
-        std::pair<bool, Stack<std::pair<base_node *, size_type> > > foundStack = leafSearchWithPath(key);
-        return tryAddKeyWithPath(key, foundStack);
+        Stack<std::pair<base_node *, size_type> > stack{height + 1};
+        if (leafSearchWithPath(key, stack))
+            return false;
+        tryAddKeyWithPath(key, stack);
+        return true;
     }
 
-    bool tryAddKeyWithPath(const key_type &key,
-                           std::pair<bool, Stack<std::pair<base_node *, size_type> > > &foundStack) noexcept {
-        auto &[found, stack] = foundStack;
-        if (found) // duplicate
-            return false;
+    void tryAddKeyWithPath(const key_type &key, Stack<std::pair<base_node *, size_type> > &stack) noexcept {
         assert(!stack.empty());
         const auto [leaf, leafIdx] = stack.top();
         stack.pop();
         ++sz;
         base_node *newRightChild = static_cast<leaf_node *>(leaf)->addKeyToLeaf(leafIdx, key);
         if (newRightChild == nullptr)
-            return true;
+            return;
         while (!stack.empty()) {
             const auto [internalNode, childIdx] = stack.top();
             stack.pop();
             newRightChild = static_cast<internal_node &>(*internalNode).addChildToInternalNode(childIdx,
                                                                                                *newRightChild);
             if (newRightChild == nullptr)
-                return true;
+                return;
         }
         ++height;
         roodNode = roodNode->createNewRootNodeFromOld(*newRightChild);
-        return true;
     }
 
     bool tryRemoveKey(const Key &key) noexcept {
         if (empty())
             return false;
-        auto [found, stack] = leafSearchWithPath(key);
-        if (!found)
+        Stack<std::pair<base_node *, size_type> > stack{height + 1};
+        if (!leafSearchWithPath(key, stack))
             return false;
         const auto [leaf, leafIdx] = stack.top();
         stack.pop();
@@ -877,9 +875,8 @@ private:
     }
 
     // returns path stack with nodes and child indices, on the top is leaf child with key index
-    [[nodiscard]] std::pair<bool, Stack<std::pair<base_node *, size_type> > >
-    leafSearchWithPath(const key_type &key) const noexcept {
-        Stack<std::pair<base_node *, size_type> > stack{height + 1};
+    [[nodiscard]] bool
+    leafSearchWithPath(const key_type &key, Stack<std::pair<base_node *, size_type> > &stack) const noexcept {
         base_node *node = roodNode;
         auto [found, idx] = node->getKeys().contains(key);
         while (!node->isLeaf) {
@@ -892,11 +889,11 @@ private:
             std::tie(found, idx) = node->getKeys().contains(key);
         }
         stack.emplace(node, idx);
-        return {found, std::move(stack)};
+        return found;
     }
 
     // returns leaf child with key index
-    [[nodiscard]] std::tuple<bool, base_node *, size_type> leafSearch(const key_type &key) const noexcept {
+    [[nodiscard]] bool leafSearch(const key_type &key, leaf_node *&leaf, size_type &keyIdx) const noexcept {
         base_node *node = roodNode;
         auto [found, idx] = node->getKeys().contains(key);
         while (!node->isLeaf) {
@@ -907,7 +904,9 @@ private:
             node = static_cast<internal_node &>(*node).getChildren()[idx];
             std::tie(found, idx) = node->getKeys().contains(key);
         }
-        return {found, node, idx};
+        leaf = static_cast<leaf_node *>(node);
+        keyIdx = idx;
+        return found;
     }
 
     [[nodiscard]] leaf_node *getFirstLeaf() const noexcept {
