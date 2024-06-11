@@ -13,20 +13,22 @@ template<class Type, uint32_t BlockSize>
 class NodeDataBlock {
 public:
     using key_type = Type;
-    using key_compare = std::less<key_type>;
-    using key_equal = std::equal_to<key_type>;
+    using key_compare_values = std::less<key_type>;
+    using key_equal_values = std::equal_to<key_type>;
+    using key_compare_pointers = std::less<std::remove_pointer_t<key_type> >;
+    using key_equal_pointers = std::equal_to<std::remove_pointer_t<key_type> >;
 
     using size_type = std::uint32_t;
 
     class View {
     public:
-        View(const Type *const parr_, const size_type sz_) : parr{parr_}, sz{sz_} {}
+        View(const key_type *const parr_, const size_type sz_) : parr{parr_}, sz{sz_} {}
 
-        [[nodiscard]] inline const Type *begin() const noexcept {
+        [[nodiscard]] inline const key_type *begin() const noexcept {
             return parr;
         }
 
-        [[nodiscard]] inline const Type *end() const noexcept {
+        [[nodiscard]] inline const key_type *end() const noexcept {
             return parr + sz;
         }
 
@@ -34,13 +36,13 @@ public:
             return sz;
         }
 
-        [[nodiscard]] inline const Type &operator[](const size_type idx) const noexcept {
+        [[nodiscard]] inline const key_type &operator[](const size_type idx) const noexcept {
             assert(idx < sz);
             return parr[idx];
         }
 
     private:
-        const Type *parr = nullptr;
+        const key_type *parr = nullptr;
         size_type sz = 0;
     };
 
@@ -48,30 +50,30 @@ public:
         return {block, sz};
     }
 
-    [[nodiscard]] inline const Type *begin() const noexcept {
+    [[nodiscard]] inline const key_type *begin() const noexcept {
         return block;
     }
 
-    [[nodiscard]] inline const Type *end() const noexcept {
+    [[nodiscard]] inline const key_type *end() const noexcept {
         return block + sz;
     }
 
-    [[nodiscard]] inline const Type &operator[](const size_type idx) const noexcept {
+    [[nodiscard]] inline const key_type &operator[](const size_type idx) const noexcept {
         assert(idx < sz && !empty());
         return block[idx];
     }
 
-    [[nodiscard]] inline Type &operator[](const size_type idx) noexcept {
+    [[nodiscard]] inline key_type &operator[](const size_type idx) noexcept {
         assert(idx < sz && !empty());
         return block[idx];
     }
 
-    [[nodiscard]] inline const Type &front() const noexcept {
+    [[nodiscard]] inline const key_type &front() const noexcept {
         assert(!empty());
         return block[0];
     }
 
-    [[nodiscard]] inline const Type &back() const noexcept {
+    [[nodiscard]] inline const key_type &back() const noexcept {
         assert(!empty());
         return block[sz - 1];
     }
@@ -88,7 +90,7 @@ public:
         return sz >= BlockSize;
     }
 
-    void insertAndShiftRight(const size_type idx, const Type &value) noexcept {
+    void insertAndShiftRight(const size_type idx, const key_type &value) noexcept {
         assert(idx < BlockSize && !full());
         for (size_type i = sz; i > idx; --i)
 #pragma GCC diagnostic warning "-Warray-bounds"
@@ -98,11 +100,11 @@ public:
         ++sz;
     }
 
-    inline void pushFront(const Type &value) noexcept {
+    inline void pushFront(const key_type &value) noexcept {
         insertAndShiftRight(0, value);
     }
 
-    inline void pushBack(const Type &value) noexcept {
+    inline void pushBack(const key_type &value) noexcept {
         insertAndShiftRight(sz, value);
     }
 
@@ -121,7 +123,7 @@ public:
         eraseAndShiftLeft(sz - 1);
     }
 
-    NodeDataBlock splitAddNewValue(const size_type newValueIdx, const Type &newValue) noexcept {
+    NodeDataBlock splitAddNewValue(const size_type newValueIdx, const key_type &newValue) noexcept {
         assert(newValueIdx <= BlockSize && full());
         // oldBlockSize >= newBlock_size
         size_type oldBlockSize = (BlockSize + 1) / 2;
@@ -154,24 +156,41 @@ public:
 
     // only for sorted values, SFINAE
     // returns (true, idx) if contains value, else (false, idx) of first element, so that value <= element
-    template<class U = Type, class = std::enable_if_t<!std::is_pointer_v<U> > >
-    [[nodiscard]] std::pair<bool, size_type> contains(const Type &value) const noexcept {
-        if constexpr (BlockSize >= 256) {   // binary search
-            const Type *it = binarySearch(begin(), end(), value);  // lower bound, value <= *it
-            const size_type idx = it - begin();
-            if (it != end() && key_equal{}(value, *it))  // contains value
-                return {true, idx};
-            return {false, idx};
-        } else {   // linear search
-            for (size_type idx = 0; idx < sz; ++idx) {
-                if (key_compare{}(block[idx], value))   // value >= block[idx]
-                    continue;
-                if (key_equal{}(value, block[idx]))
-                    return {true, idx};
-                if (key_compare{}(value, block[idx]))
-                    return {false, idx};
+    [[nodiscard]] std::pair<bool, size_type> contains(const std::remove_pointer_t<key_type> &value) const noexcept {
+        if constexpr (std::is_pointer_v<key_type>) {
+            if constexpr (BlockSize >= 256) {   // binary search
+                const key_type *it = binarySearch(begin(), end(), value);  // lower bound, value <= *it
+                const size_type idx = it - begin();
+                // contains value
+                return {it != end() && key_equal_pointers{}(value, *(*it)), idx};
+            } else {   // linear search
+                for (size_type idx = 0; idx < sz; ++idx) {
+                    if (key_compare_pointers{}(*block[idx], value))   // value >= block[idx]
+                        continue;
+                    if (key_equal_pointers{}(value, *block[idx]))
+                        return {true, idx};
+                    if (key_compare_pointers{}(value, *block[idx]))
+                        return {false, idx};
+                }
+                return {false, sz};
             }
-            return {false, sz};
+        } else {
+            if constexpr (BlockSize >= 256) {   // binary search
+                const key_type *it = binarySearch(begin(), end(), value);  // lower bound, value <= *it
+                const size_type idx = it - begin();
+                // contains value
+                return {it != end() && key_equal_values{}(value, *it), idx};
+            } else {   // linear search
+                for (size_type idx = 0; idx < sz; ++idx) {
+                    if (key_compare_values{}(block[idx], value))   // value >= block[idx]
+                        continue;
+                    if (key_equal_values{}(value, block[idx]))
+                        return {true, idx};
+                    if (key_compare_values{}(value, block[idx]))
+                        return {false, idx};
+                }
+                return {false, sz};
+            }
         }
     }
 
@@ -180,22 +199,30 @@ public:
     }
 
 private:
-    Type block[BlockSize]{};
+    key_type block[BlockSize]{};
     size_type sz = 0;
 
     // only for sorted values, SFINAE, lower bound
-    template<class U = Type, class = std::enable_if_t<!std::is_pointer_v<U> > >
-    static const Type *binarySearch(const Type *first, const Type *last, const Type &value) {
-        const Type *it;
+    static const key_type *
+    binarySearch(const key_type *first, const key_type *last, const std::remove_pointer_t<key_type> &value) {
+        const key_type *it;
         for (ptrdiff_t count = last - first, step; count > 0;) {
             it = first;
             step = count / 2;
             it += step;
-            if (key_compare{}(*it, value)) {
-                first = ++it;
-                count -= step + 1;
-            } else
-                count = step;
+            if constexpr (std::is_pointer_v<key_type>) {
+                if (key_compare_pointers{}(*(*it), value)) {
+                    first = ++it;
+                    count -= step + 1;
+                } else
+                    count = step;
+            } else {
+                if (key_compare_values{}(*it, value)) {
+                    first = ++it;
+                    count -= step + 1;
+                } else
+                    count = step;
+            }
         }
         return first;
     }
@@ -286,6 +313,12 @@ class InternalNode;
 template<class KeyType, size_t Order>
 class LeafNode;
 
+template<typename KeyType, size_t Order>
+struct keys_block_helper {
+    using type = std::conditional_t<(sizeof(KeyType) > 16),
+            NodeDataBlock<KeyType *, 2 * Order>, NodeDataBlock<KeyType, 2 * Order> >;
+};
+
 template<class KeyType, size_t Order>
 class BaseNode {
 public:
@@ -299,6 +332,8 @@ public:
     using internal_node = InternalNode<key_type, Order>;
     using leaf_node = LeafNode<key_type, Order>;
 
+    using keys_block = typename keys_block_helper<key_type, Order>::type;
+
     static_assert(Order >= 1);
 
     friend class InternalNode<key_type, Order>;
@@ -311,28 +346,12 @@ public:
 
     virtual ~BaseNode() noexcept = default;
 
-    [[nodiscard]] inline bool needsMerging() const noexcept {
-        return keys.size() < Order;
-    }
-
-    [[nodiscard]] inline bool hasEnoughKeysToBorrow() const noexcept {
-        assert(keys.size() >= Order - 1);
-        return keys.size() > Order;
-    }
-
-    [[nodiscard]] inline const NodeDataBlock<key_type, 2 * Order> &getKeys() const noexcept {
-        return keys;
-    }
-
     [[nodiscard]] base_node *createNewRootNodeFromOld(base_node &newChild) noexcept {
         auto newRootNode = new internal_node;
         newRootNode->children.pushFront(this);
         newRootNode->insertChild(0, newChild);
         return newRootNode;
     }
-
-protected:
-    NodeDataBlock<key_type, 2 * Order> keys;
 };
 
 template<class KeyType, size_t Order>
@@ -345,14 +364,16 @@ public:
     using size_type = std::size_t;
 
     using base_node = BaseNode<KeyType, Order>;
-    using internal_node = InternalNode<KeyType, Order>;
+    using internal_node = InternalNode<key_type, Order>;
     using leaf_node = LeafNode<KeyType, Order>;
+
+    using keys_block = typename keys_block_helper<key_type, Order>::type;
 
     friend class BaseNode<KeyType, Order>;
 
     friend class LeafNode<KeyType, Order>;
 
-    InternalNode() : base_node{false} {}
+    InternalNode() noexcept: base_node{false} {}
 
     ~InternalNode() noexcept override {
         for (const auto child: children)
@@ -365,21 +386,39 @@ public:
     }
 
     void print(std::ostream &os) const noexcept {
-        os << "InternalNode: this = " << this << " keys (size " << this->keys.size() << "): ";
-        for (const auto &key: this->keys)
-            os << key << ' ';
+        os << "InternalNode: this = " << this << " keys (size " << keys.size() << "): ";
+        if constexpr (sizeof(KeyType) > 16) {
+            for (const auto &key: keys)
+                os << *key << ' ';
+        } else {
+            for (const auto &key: keys)
+                os << key << ' ';
+        }
         os << " children (size " << children.size() << "): ";
         for (const auto child: children)
             os << child << ' ';
     }
 
+    [[nodiscard]] inline bool needsMerging() const noexcept {
+        return keys.size() < Order;
+    }
+
+    [[nodiscard]] inline bool hasEnoughKeysToBorrow() const noexcept {
+        assert(keys.size() >= Order - 1);
+        return keys.size() > Order;
+    }
+
+    [[nodiscard]] inline const keys_block &getKeys() const noexcept {
+        return keys;
+    }
+
     // returns nullptr if was split
     [[nodiscard]] internal_node *addChildToInternalNode(const size_type idx, base_node &newChild) noexcept {
-        if (!this->keys.full()) {
+        if (!keys.full()) {
             insertChild(idx, newChild);
             return nullptr;
         }
-        InternalNode *newRightINode = splitInternalNode(idx, newChild);
+        internal_node *newRightINode = splitInternalNode(idx, newChild);
         return newRightINode;
     }
 
@@ -388,63 +427,107 @@ public:
     }
 
     void fixProblemChild(const size_type problemChildIdx) noexcept {
-        assert(!this->keys.empty() && !children.empty());
-        if (problemChildIdx > 0 && children[problemChildIdx - 1]->hasEnoughKeysToBorrow())
-            borrowKeyFromLeftSibling(problemChildIdx);
-        else if (problemChildIdx < children.size() - 1 && children[problemChildIdx + 1]->hasEnoughKeysToBorrow())
-            borrowKeyFromRightSibling(problemChildIdx);
-        else {
-            size_type leftChildIdx = std::min(problemChildIdx, static_cast<size_type>(this->keys.size()) - 1);
-            mergeWithRightSibling(leftChildIdx);
+        assert(!keys.empty() && !children.empty());
+        if (children[problemChildIdx]->isLeaf) {
+            if (problemChildIdx > 0 && static_cast<leaf_node &>(*children[problemChildIdx - 1]).hasEnoughKeysToBorrow())
+                borrowKeyFromLeftSibling(problemChildIdx);
+            else if (problemChildIdx < children.size() - 1 &&
+                     static_cast<leaf_node &>(*children[problemChildIdx + 1]).hasEnoughKeysToBorrow())
+                borrowKeyFromRightSibling(problemChildIdx);
+            else {
+                size_type leftChildIdx = std::min(problemChildIdx, static_cast<size_type>(keys.size()) - 1);
+                mergeWithRightSibling(leftChildIdx);
+            }
+        } else {
+            if (problemChildIdx > 0 &&
+                static_cast<internal_node &>(*children[problemChildIdx - 1]).hasEnoughKeysToBorrow())
+                borrowKeyFromLeftSibling(problemChildIdx);
+            else if (problemChildIdx < children.size() - 1 &&
+                     static_cast<internal_node &>(*children[problemChildIdx + 1]).hasEnoughKeysToBorrow())
+                borrowKeyFromRightSibling(problemChildIdx);
+            else {
+                size_type leftChildIdx = std::min(problemChildIdx, static_cast<size_type>(keys.size()) - 1);
+                mergeWithRightSibling(leftChildIdx);
+            }
         }
     }
 
     base_node *pullUpChildToRootNode() noexcept {
-        assert(this->keys.empty() && children.size() == 1);
+        assert(keys.empty() && children.size() == 1);
         base_node *newRootNode = children.front();
         children.clear();   // nullify children
         return newRootNode;
     }
 
 private:
+    keys_block keys;
     NodeDataBlock<base_node *, 2 * Order + 1> children;
 
     void insertChild(const size_type idx, base_node &newChild) noexcept {
-        assert(!this->keys.full() && !children.full() && !children.empty() && !newChild.keys.empty());
-        assert(this->keys.contains(newChild.keys.front()).second == idx);
-        this->keys.insertAndShiftRight(idx, newChild.keys.front());
-        children.insertAndShiftRight(idx + 1, &newChild);
-        // deletes the temporary first key of new right internal node child
-        if (!newChild.isLeaf)
-            newChild.keys.popFront();
+        assert(!keys.full() && !children.full() && !children.empty() &&
+               ((newChild.isLeaf && !static_cast<leaf_node &>(newChild).keys.empty()) ||
+                (!newChild.isLeaf && !static_cast<internal_node &>(newChild).keys.empty())));
+        assert(keys.contains(newChild.isLeaf ? static_cast<leaf_node &>(newChild).keys.front()
+                                             : static_cast<internal_node &>(newChild).keys.front()).second == idx);
+        if (newChild.isLeaf) {
+            if constexpr (sizeof(KeyType) > 16)
+                keys.insertAndShiftRight(idx, const_cast<key_type *>(static_cast<leaf_node &>(newChild).keys.begin()));
+            else
+                keys.insertAndShiftRight(idx, static_cast<leaf_node &>(newChild).keys.front());
+            children.insertAndShiftRight(idx + 1, &newChild);
+        } else {
+            keys.insertAndShiftRight(idx, static_cast<internal_node &>(newChild).keys.front());
+            children.insertAndShiftRight(idx + 1, &newChild);
+            // deletes the temporary first key of new right internal node child
+            static_cast<internal_node &>(newChild).keys.popFront();
+        }
     }
 
-    [[nodiscard]] InternalNode *splitInternalNode(const size_type idx, base_node &newChild) noexcept {
-        assert(this->keys.full() && children.full());
+    [[nodiscard]] internal_node *splitInternalNode(const size_type idx, base_node &newChild) noexcept {
+        assert(keys.full() && children.full());
         auto newRightInternalNode = new internal_node;
-        // the first key of new right internal node is saved in order to delete it later in insertChild or splitInternalNode parent method
-        newRightInternalNode->keys = this->keys.splitAddNewValue(idx, newChild.keys.front());
-        newRightInternalNode->children = children.splitAddNewValue(idx + 1, &newChild);
-        // deletes the temporary first key of new right internal node child
-        if (!newChild.isLeaf)
-            newChild.keys.popFront();
+        if (newChild.isLeaf) {
+            // the first key of new right internal node is saved in order to delete it later in insertChild or splitInternalNode parent method
+            if constexpr (sizeof(KeyType) > 16)
+                newRightInternalNode->keys = keys.splitAddNewValue(idx,
+                                                                   const_cast<key_type *>(static_cast<leaf_node &>(newChild).keys.begin()));
+            else
+                newRightInternalNode->keys = keys.splitAddNewValue(idx,
+                                                                   static_cast<leaf_node &>(newChild).keys.front());
+            newRightInternalNode->children = children.splitAddNewValue(idx + 1, &newChild);
+        } else {
+            // the first key of new right internal node is saved in order to delete it later in insertChild or splitInternalNode parent method
+            newRightInternalNode->keys = keys.splitAddNewValue(idx,
+                                                               static_cast<internal_node &>(newChild).keys.front());
+            newRightInternalNode->children = children.splitAddNewValue(idx + 1, &newChild);
+            // deletes the temporary first key of new right internal node child
+            static_cast<internal_node &>(newChild).keys.popFront();
+        }
         return newRightInternalNode;
     }
 
     void borrowKeyFromLeftSibling(const size_type problemChildIdx) noexcept {
-        assert(problemChildIdx > 0 && children[problemChildIdx - 1]->hasEnoughKeysToBorrow());
+        assert(problemChildIdx > 0 &&
+               ((children[problemChildIdx]->isLeaf &&
+                 static_cast<leaf_node &>(*children[problemChildIdx - 1]).hasEnoughKeysToBorrow()) ||
+                (!children[problemChildIdx]->isLeaf &&
+                 static_cast<internal_node &>(*children[problemChildIdx - 1]).hasEnoughKeysToBorrow())));
         if (children[problemChildIdx]->isLeaf) {
             auto &leftSibling = static_cast<leaf_node &>(*children[problemChildIdx - 1]);
             auto &rightProblemChild = static_cast<leaf_node &>(*children[problemChildIdx]);
             rightProblemChild.keys.pushFront(leftSibling.keys.back());
             leftSibling.keys.popBack();
-            this->keys[problemChildIdx - 1] = rightProblemChild.keys.front();  // update index key
+            // update index key
+            if constexpr (sizeof(KeyType) > 16)
+                keys[problemChildIdx - 1] = const_cast<key_type *>(rightProblemChild.keys.begin());
+            else
+                keys[problemChildIdx - 1] = rightProblemChild.keys.front();
         } else {
             auto &leftSibling = static_cast<internal_node &>(*children[problemChildIdx - 1]);
             auto &rightProblemChild = static_cast<internal_node &>(*children[problemChildIdx]);
             // left sibling last key ->/ left to right problem child parent key \-> right problem child first key
-            rightProblemChild.keys.pushFront(this->keys[problemChildIdx - 1]);  // move down index key
-            this->keys[problemChildIdx - 1] = leftSibling.keys.back();  // update index key
+            rightProblemChild.keys.pushFront(keys[problemChildIdx - 1]);  // move down index key
+            keys[problemChildIdx - 1] = leftSibling.keys.back();  // update index key
             rightProblemChild.children.pushFront(leftSibling.children.back());
             leftSibling.keys.popBack();
             leftSibling.children.popBack();
@@ -452,19 +535,27 @@ private:
     }
 
     void borrowKeyFromRightSibling(const size_type problemChildIdx) noexcept {
-        assert(problemChildIdx < children.size() - 1 && children[problemChildIdx + 1]->hasEnoughKeysToBorrow());
+        assert(problemChildIdx < children.size() - 1 &&
+               ((children[problemChildIdx]->isLeaf &&
+                 static_cast<leaf_node &>(*children[problemChildIdx + 1]).hasEnoughKeysToBorrow()) ||
+                (!children[problemChildIdx]->isLeaf &&
+                 static_cast<internal_node &>(*children[problemChildIdx + 1]).hasEnoughKeysToBorrow())));
         if (children[problemChildIdx]->isLeaf) {
             auto &leftProblemChild = static_cast<leaf_node &>(*children[problemChildIdx]);
             auto &rightSibling = static_cast<leaf_node &>(*children[problemChildIdx + 1]);
             leftProblemChild.keys.pushBack(rightSibling.keys.front());
             rightSibling.keys.popFront();
-            this->keys[problemChildIdx] = rightSibling.keys.front();  // update index key
+            // update index key
+            if constexpr (sizeof(KeyType) > 16)
+                keys[problemChildIdx] = const_cast<key_type *>(rightSibling.keys.begin());
+            else
+                keys[problemChildIdx] = rightSibling.keys.front();
         } else {
             auto &leftProblemChild = static_cast<internal_node &>(*children[problemChildIdx]);
             auto &rightSibling = static_cast<internal_node &>(*children[problemChildIdx + 1]);
             // left problem child last key <-/ left to right sibling parent key \<- right sibling first key
-            leftProblemChild.keys.pushBack(this->keys[problemChildIdx]);  // move down index key
-            this->keys[problemChildIdx] = rightSibling.keys.front();  // update index key
+            leftProblemChild.keys.pushBack(keys[problemChildIdx]);  // move down index key
+            keys[problemChildIdx] = rightSibling.keys.front();  // update index key
             leftProblemChild.children.pushBack(rightSibling.children.front());
             rightSibling.keys.popFront();
             rightSibling.children.popFront();
@@ -472,7 +563,7 @@ private:
     }
 
     void mergeWithRightSibling(const size_type leftChildIdx) noexcept {
-        assert(leftChildIdx < this->keys.size());
+        assert(leftChildIdx < keys.size());
         if (children[leftChildIdx]->isLeaf) {
             auto &leftChild = static_cast<leaf_node &>(*children[leftChildIdx]);
             auto &rightChild = static_cast<leaf_node &>(*children[leftChildIdx + 1]);
@@ -486,13 +577,13 @@ private:
             auto &rightChild = static_cast<internal_node &>(*children[leftChildIdx + 1]);
             assert(!leftChild.hasEnoughKeysToBorrow() && !rightChild.hasEnoughKeysToBorrow());
             // left child keys + left to right sibling parent key (than deleted in parent) + right sibling keys
-            leftChild.keys.pushBack(this->keys[leftChildIdx]);
+            leftChild.keys.pushBack(keys[leftChildIdx]);
             leftChild.keys.merge(rightChild.keys);
             leftChild.children.merge(rightChild.children);
             rightChild.children.clear();   // nullify children
             delete &rightChild;
         }
-        this->keys.eraseAndShiftLeft(leftChildIdx);
+        keys.eraseAndShiftLeft(leftChildIdx);
         children.eraseAndShiftLeft(leftChildIdx + 1);
     }
 };
@@ -507,14 +598,16 @@ public:
     using size_type = std::size_t;
 
     using base_node = BaseNode<KeyType, Order>;
-    using internal_node = InternalNode<KeyType, Order>;
+    using internal_node = InternalNode<key_type, Order>;
     using leaf_node = LeafNode<KeyType, Order>;
+
+    using keys_block = typename keys_block_helper<key_type, Order>::type;
 
     friend class BaseNode<KeyType, Order>;
 
     friend class InternalNode<KeyType, Order>;
 
-    LeafNode() : base_node{true} {}
+    LeafNode() noexcept: base_node{true} {}
 
     friend std::ostream &operator<<(std::ostream &os, const leaf_node &node) noexcept {
         node.print(os);
@@ -523,16 +616,29 @@ public:
 
     void print(std::ostream &os) const noexcept {
 //        os << "LeafNode: prev = " << prev << " this = " << this << " next = " << next << " keys (size "
-//           << this->keys.size() << "): ";
-        os << "LeafNode: this = " << this << " next = " << next << " keys (size " << this->keys.size() << "): ";
-        for (const auto &key: this->keys)
+//           << keys.size() << "): ";
+        os << "LeafNode: this = " << this << " next = " << next << " keys (size " << keys.size() << "): ";
+        for (const auto &key: keys)
             os << key << ' ';
+    }
+
+    [[nodiscard]] inline bool needsMerging() const noexcept {
+        return keys.size() < Order;
+    }
+
+    [[nodiscard]] inline bool hasEnoughKeysToBorrow() const noexcept {
+        assert(keys.size() >= Order - 1);
+        return keys.size() > Order;
+    }
+
+    [[nodiscard]] inline const NodeDataBlock<key_type, 2 * Order> &getKeys() const noexcept {
+        return keys;
     }
 
     // returns nullptr if was split
     [[nodiscard]] leaf_node *addKeyToLeaf(const size_type idx, const key_type &key) noexcept {
-        if (!this->keys.full()) {
-            this->keys.insertAndShiftRight(idx, key);
+        if (!keys.full()) {
+            keys.insertAndShiftRight(idx, key);
             return nullptr;
         }
         leaf_node *newRightLeaf = splitLeaf(idx, key);
@@ -548,16 +654,17 @@ public:
 //    }
 
     inline void removeKeyFromLeaf(const size_type idx) noexcept {
-        this->keys.eraseAndShiftLeft(idx);
+        keys.eraseAndShiftLeft(idx);
     }
 
 private:
+    NodeDataBlock<key_type, 2 * Order> keys;
     leaf_node *next = nullptr;
 
     [[nodiscard]] leaf_node *splitLeaf(const size_type idx, const key_type &newKey) noexcept {
-        assert(this->keys.full());
+        assert(keys.full());
         auto newRightLeaf = new leaf_node;
-        newRightLeaf->keys = this->keys.splitAddNewValue(idx, newKey);
+        newRightLeaf->keys = keys.splitAddNewValue(idx, newKey);
 //        if (next != nullptr)
 //            next->prev = newRightLeaf;
         newRightLeaf->next = next;
@@ -582,6 +689,8 @@ public:
     using base_node = BaseNode<value_type, N>;
     using internal_node = InternalNode<value_type, N>;
     using leaf_node = LeafNode<value_type, N>;
+
+    using keys_block = typename keys_block_helper<value_type, N>::type;
 
     Iterator() = default;
 
@@ -659,6 +768,8 @@ public:
     using base_node = BaseNode<Key, N>;
     using internal_node = InternalNode<Key, N>;
     using leaf_node = LeafNode<Key, N>;
+
+    using keys_block = typename keys_block_helper<value_type, N>::type;
 
     // O(1)
     ADS_set() = default;
@@ -856,16 +967,17 @@ private:
         stack.pop();
         static_cast<leaf_node &>(*leaf).removeKeyFromLeaf(leafIdx);
         --sz;
-        if (roodNode->isLeaf || !leaf->needsMerging())
+        if (roodNode->isLeaf || !static_cast<leaf_node &>(*leaf).needsMerging())
             return true;
         while (!stack.empty()) {
             const auto [internalNode, childIdx] = stack.top();
             stack.pop();
             static_cast<internal_node &>(*internalNode).fixProblemChild(childIdx);
-            if (!internalNode->needsMerging())
+            if (!static_cast<internal_node &>(*internalNode).needsMerging())
                 return true;
         }
-        if (!roodNode->getKeys().empty())
+        if ((!roodNode->isLeaf && !static_cast<internal_node &>(*roodNode).getKeys().empty()) ||
+            (roodNode->isLeaf && !static_cast<leaf_node &>(*roodNode).getKeys().empty()))
             return true;
         --height;
         base_node *newRootNode = static_cast<internal_node &>(*roodNode).pullUpChildToRootNode();
@@ -878,7 +990,8 @@ private:
     [[nodiscard]] bool
     leafSearchWithPath(const key_type &key, Stack<std::pair<base_node *, size_type> > &stack) const noexcept {
         base_node *node = roodNode;
-        auto [found, idx] = node->getKeys().contains(key);
+        auto [found, idx] = node->isLeaf ? static_cast<leaf_node &>(*node).getKeys().contains(key)
+                                         : static_cast<internal_node &>(*node).getKeys().contains(key);
         while (!node->isLeaf) {
             // if key is found in internal node, we need to go to the right child,
             // contains returns lower bound <=, so we need to increment child idx
@@ -886,7 +999,11 @@ private:
                 ++idx;
             stack.emplace(node, idx);
             node = static_cast<internal_node &>(*node).getChildren()[idx];
-            std::tie(found, idx) = node->getKeys().contains(key);
+            if (node->isLeaf) {
+                std::tie(found, idx) = static_cast<leaf_node &>(*node).getKeys().contains(key);
+                break;
+            } else
+                std::tie(found, idx) = static_cast<internal_node &>(*node).getKeys().contains(key);
         }
         stack.emplace(node, idx);
         return found;
@@ -895,14 +1012,19 @@ private:
     // returns leaf child with key index
     [[nodiscard]] bool leafSearch(const key_type &key, leaf_node *&leaf, size_type &keyIdx) const noexcept {
         base_node *node = roodNode;
-        auto [found, idx] = node->getKeys().contains(key);
+        auto [found, idx] = node->isLeaf ? static_cast<leaf_node &>(*node).getKeys().contains(key)
+                                         : static_cast<internal_node &>(*node).getKeys().contains(key);
         while (!node->isLeaf) {
             // if key is found in internal node, we need to go to the right child,
             // contains returns lower bound <=, so we need to increment child idx
             if (found)
                 ++idx;
             node = static_cast<internal_node &>(*node).getChildren()[idx];
-            std::tie(found, idx) = node->getKeys().contains(key);
+            if (node->isLeaf) {
+                std::tie(found, idx) = static_cast<leaf_node &>(*node).getKeys().contains(key);
+                break;
+            } else
+                std::tie(found, idx) = static_cast<internal_node &>(*node).getKeys().contains(key);
         }
         leaf = static_cast<leaf_node *>(node);
         keyIdx = idx;
