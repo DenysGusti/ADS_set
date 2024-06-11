@@ -833,7 +833,7 @@ public:
         Stack<std::pair<base_node *, size_type> > stack{height + 1};
         if (leafSearchWithPath(key, stack))
             return {const_iterator{static_cast<leaf_node *>(stack.top().first), stack.top().second}, false};
-        tryAddKeyWithPath(key, stack);
+        addKeyWithPath(key, stack);
         return {find(key), true};
     }
 
@@ -933,11 +933,11 @@ private:
         Stack<std::pair<base_node *, size_type> > stack{height + 1};
         if (leafSearchWithPath(key, stack))
             return false;
-        tryAddKeyWithPath(key, stack);
+        addKeyWithPath(key, stack);
         return true;
     }
 
-    void tryAddKeyWithPath(const key_type &key, Stack<std::pair<base_node *, size_type> > &stack) noexcept {
+    void addKeyWithPath(const key_type &key, Stack<std::pair<base_node *, size_type> > &stack) noexcept {
         assert(!stack.empty());
         const auto [leaf, leafIdx] = stack.top();
         stack.pop();
