@@ -942,7 +942,7 @@ private:
         const auto [leaf, leafIdx] = stack.top();
         stack.pop();
         ++sz;
-        base_node *newRightChild = static_cast<leaf_node *>(leaf)->addKeyToLeaf(leafIdx, key);
+        base_node *newRightChild = static_cast<leaf_node &>(*leaf).addKeyToLeaf(leafIdx, key);
         if (newRightChild == nullptr)
             return;
         while (!stack.empty()) {
